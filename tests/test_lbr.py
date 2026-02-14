@@ -8,6 +8,7 @@ def test_lbr_callback_metrics_exist() -> None:
         parallel_games=8,
         max_steps_per_trajectory=6,
         batch_size=8,
+        buffer_capacity=128,
         updates_per_cycle=1,
         device="cpu",
         precision="fp32",
@@ -16,6 +17,7 @@ def test_lbr_callback_metrics_exist() -> None:
         lbr_eval_every_iters=1,
         lbr_eval_games=4,
         lbr_rollouts_per_action=1,
+        logging_enabled=False,
     )
     trainer = DeepCFRTrainer(cfg)
 

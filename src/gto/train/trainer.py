@@ -1,7 +1,9 @@
 from dataclasses import asdict, dataclass
+from datetime import datetime
+import os
+from pathlib import Path
 import signal
 import threading
-from pathlib import Path
 from typing import Callable
 
 import torch
@@ -14,6 +16,22 @@ from gto.eval.lbr import LBRConfig, LocalBestResponseEvaluator
 from gto.models import AdvantageNetwork, PolicyNetwork, masked_kl_policy_loss
 from gto.replay import ReservoirBuffer
 from gto.train.checkpointing import CheckpointManager
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except Exception:  # pragma: no cover - optional runtime dependency fallback
+    SummaryWriter = None
+
+
+class _NullSummaryWriter:
+    def add_scalar(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        _ = args, kwargs
+
+    def flush(self) -> None:
+        return
+
+    def close(self) -> None:
+        return
 
 
 @dataclass(slots=True)
@@ -40,6 +58,10 @@ class DeepCFRConfig:
     checkpoint_keep_last: int = 5
     resume_from: str | None = None
     handle_sigusr1: bool = True
+
+    logging_enabled: bool = True
+    run_dir_root: str = "runs"
+    log_flush_every_iters: int = 5
 
     lbr_enabled: bool = True
     lbr_eval_every_iters: int = 5
@@ -112,6 +134,9 @@ class DeepCFRTrainer:
             keep_last=cfg.checkpoint_keep_last,
         )
 
+        self.writer, self.run_dir = self._init_summary_writer()
+        self._train_step_idx = 0
+
         self.current_iteration = 0
         self.total_trajectories = 0
         self._last_checkpoint_path: Path | None = None
@@ -141,14 +166,21 @@ class DeepCFRTrainer:
                     for k, v in step_metrics.items():
                         metrics[k] = metrics.get(k, 0.0) + v / self.cfg.updates_per_cycle
             if self.cfg.lbr_enabled and self.cfg.lbr_eval_every_iters > 0 and it % self.cfg.lbr_eval_every_iters == 0:
-                metrics.update(self.estimate_lbr())
+                lbr_metrics = self.estimate_lbr()
+                metrics.update(lbr_metrics)
+                self._log_lbr_metrics(it, lbr_metrics)
 
             history.append(metrics)
 
+            if self.cfg.log_flush_every_iters > 0 and it % self.cfg.log_flush_every_iters == 0:
+                self.writer.flush()
+
             if interrupted:
                 self.save_checkpoint(reason="sigusr1_preempt")
+                self.writer.flush()
                 break
 
+        self.writer.flush()
         return history
 
     def collect_trajectories(self, n_trajectories: int) -> bool:
@@ -269,9 +301,15 @@ class DeepCFRTrainer:
             policy_loss = masked_kl_policy_loss(logits, strat_targets)
         self._backward_and_step(policy_loss, self.policy_opt)
 
+        adv_val = float(adv_loss.detach().cpu())
+        pol_val = float(policy_loss.detach().cpu())
+        self.writer.add_scalar("loss/adv_mse", adv_val, self._train_step_idx)
+        self.writer.add_scalar("loss/policy_kl", pol_val, self._train_step_idx)
+        self._train_step_idx += 1
+
         return {
-            "adv_loss": float(adv_loss.detach().cpu()),
-            "policy_loss": float(policy_loss.detach().cpu()),
+            "adv_loss": adv_val,
+            "policy_loss": pol_val,
         }
 
     def estimate_lbr(self) -> dict[str, float]:
@@ -284,6 +322,8 @@ class DeepCFRTrainer:
             "schema_version": 1,
             "iteration": self.current_iteration,
             "total_trajectories": self.total_trajectories,
+            "train_step_idx": self._train_step_idx,
+            "run_dir": str(self.run_dir) if self.run_dir is not None else None,
             "config": asdict(self.cfg),
             "adv_model": self.adv_net.state_dict(),
             "policy_model": self.policy_net.state_dict(),
@@ -324,6 +364,7 @@ class DeepCFRTrainer:
 
         self.current_iteration = int(checkpoint.get("iteration", 0))
         self.total_trajectories = int(checkpoint.get("total_trajectories", 0))
+        self._train_step_idx = int(checkpoint.get("train_step_idx", self._train_step_idx))
 
         if self._checkpoint_interval > 0:
             next_mul = (self.total_trajectories // self._checkpoint_interval) + 1
@@ -343,6 +384,30 @@ class DeepCFRTrainer:
         if self._sigusr1_prev_handler is not None:
             signal.signal(signal.SIGUSR1, self._sigusr1_prev_handler)
             self._sigusr1_prev_handler = None
+        self.writer.flush()
+        self.writer.close()
+
+    def _init_summary_writer(self) -> tuple[SummaryWriter | _NullSummaryWriter, Path | None]:
+        if not self.cfg.logging_enabled:
+            return _NullSummaryWriter(), None
+        if SummaryWriter is None:
+            return _NullSummaryWriter(), None
+
+        run_id = os.getenv("SLURM_JOB_ID")
+        if not run_id:
+            run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+        run_dir = Path(self.cfg.run_dir_root) / str(run_id)
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        return SummaryWriter(log_dir=str(run_dir)), run_dir
+
+    def _log_lbr_metrics(self, iteration: int, metrics: dict[str, float]) -> None:
+        if "lbr_exploitability" in metrics:
+            self.writer.add_scalar("lbr/exploitability", metrics["lbr_exploitability"], iteration)
+        if "lbr_p0" in metrics:
+            self.writer.add_scalar("lbr/p0", metrics["lbr_p0"], iteration)
+        if "lbr_p1" in metrics:
+            self.writer.add_scalar("lbr/p1", metrics["lbr_p1"], iteration)
 
     def _maybe_periodic_checkpoint(self) -> None:
         if self._checkpoint_interval <= 0:

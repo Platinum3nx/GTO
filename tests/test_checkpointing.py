@@ -12,6 +12,7 @@ def test_periodic_checkpoint_and_resume_round_trip(tmp_path: Path) -> None:
         parallel_games=8,
         max_steps_per_trajectory=6,
         batch_size=8,
+        buffer_capacity=128,
         updates_per_cycle=1,
         device="cpu",
         precision="fp32",
@@ -20,6 +21,7 @@ def test_periodic_checkpoint_and_resume_round_trip(tmp_path: Path) -> None:
         checkpoint_dir=str(checkpoint_dir),
         checkpoint_every_trajectories=4,
         handle_sigusr1=False,
+        logging_enabled=False,
     )
     trainer = DeepCFRTrainer(cfg)
     trainer.train()
@@ -36,6 +38,7 @@ def test_periodic_checkpoint_and_resume_round_trip(tmp_path: Path) -> None:
         parallel_games=8,
         max_steps_per_trajectory=6,
         batch_size=8,
+        buffer_capacity=128,
         updates_per_cycle=1,
         device="cpu",
         precision="fp32",
@@ -45,6 +48,7 @@ def test_periodic_checkpoint_and_resume_round_trip(tmp_path: Path) -> None:
         checkpoint_every_trajectories=4,
         resume_from=str(manual),
         handle_sigusr1=False,
+        logging_enabled=False,
     )
     resumed = DeepCFRTrainer(cfg_resume)
 
@@ -60,6 +64,7 @@ def test_preemption_flag_interrupts_collection(tmp_path: Path) -> None:
         parallel_games=8,
         max_steps_per_trajectory=4,
         batch_size=8,
+        buffer_capacity=128,
         updates_per_cycle=1,
         device="cpu",
         precision="fp32",
@@ -68,6 +73,7 @@ def test_preemption_flag_interrupts_collection(tmp_path: Path) -> None:
         checkpoint_dir=str(tmp_path / "checkpoints"),
         checkpoint_every_trajectories=100,
         handle_sigusr1=False,
+        logging_enabled=False,
     )
     trainer = DeepCFRTrainer(cfg)
     trainer._handle_sigusr1(10, None)

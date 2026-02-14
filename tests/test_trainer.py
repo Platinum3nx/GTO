@@ -8,11 +8,13 @@ def test_trainer_collects_outcome_sampling_targets() -> None:
         parallel_games=16,
         max_steps_per_trajectory=8,
         batch_size=16,
+        buffer_capacity=128,
         updates_per_cycle=1,
         device="cpu",
         precision="fp32",
         exact_showdown=False,
         lbr_enabled=False,
+        logging_enabled=False,
     )
     trainer = DeepCFRTrainer(cfg)
 

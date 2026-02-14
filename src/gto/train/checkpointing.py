@@ -30,7 +30,7 @@ class CheckpointManager:
         os.replace(tmp, dst)
 
         latest = self.checkpoint_dir / "latest.pt"
-        shutil.copy2(dst, latest)
+        self._update_latest_pointer(latest, dst)
 
         self._prune_old_checkpoints()
         return dst
@@ -61,3 +61,12 @@ class CheckpointManager:
 
         for old in ckpts[: len(ckpts) - self.keep_last]:
             old.unlink(missing_ok=True)
+
+    def _update_latest_pointer(self, latest: Path, dst: Path) -> None:
+        if latest.exists() or latest.is_symlink():
+            latest.unlink()
+
+        try:
+            latest.symlink_to(dst.name)
+        except OSError:
+            shutil.copy2(dst, latest)

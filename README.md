@@ -19,6 +19,7 @@ Flop and post-flop HUNL subgame solver scaffold using Deep CFR.
 - Evaluation: Local Best Response (LBR) callback metric (`lbr_exploitability`)
 - Precision target: bf16 on A100 (CUDA)
 - Checkpointing: periodic trajectory-based saves + SIGUSR1 preemption-triggered final save
+- Logging: TensorBoard scalars written to `runs/<SLURM_JOB_ID|timestamp>/`
 
 ## Install
 ```bash
