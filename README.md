@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart TB
-    subgraph ENV["🃏 Vectorized HUNL Environment"]
+    subgraph ENV["🃏 Vectorized HUNL Env"]
         direction LR
         DEAL["Deal Flop +<br>Hole Cards"]
         SIM["1024 Parallel<br>Games (CUDA)"]
@@ -14,20 +14,20 @@ flowchart TB
         DEAL --> SIM --> SD
     end
 
-    subgraph ENCODE["📐 State Encoder (199 Features)"]
+    subgraph ENCODE["📐 State Encoder (199d)"]
         direction LR
         CARDS["Card Encoding<br>156 features"]
         BET["Betting State<br>8 features"]
         HIST["Action History<br>35 features"]
     end
 
-    subgraph NETS["🧠 Neural Networks (PyTorch)"]
+    subgraph NETS["🧠 Neural Networks"]
         direction LR
         ADV["Advantage Net<br>199→512x4→5<br>MSE Loss"]
         POL["Policy Net<br>199→512x4→5<br>KL Loss"]
     end
 
-    subgraph CFR["♻️ MCCFR Training Loop"]
+    subgraph CFR["♻️ MCCFR Loop"]
         direction TB
         RM["Regret Matching+<br>Policy"]
         SAMPLE["Outcome Sampling<br>Tree Traversal"]
@@ -35,13 +35,13 @@ flowchart TB
         RM --> SAMPLE --> REGRET
     end
 
-    subgraph BUFFERS["💾 Reservoir Buffers (1M)"]
+    subgraph BUFFERS["💾 Reservoir Buffers"]
         direction LR
         ABUF["Advantage Buffer<br>(state, regrets)"]
         SBUF["Strategy Buffer<br>(state, policy)"]
     end
 
-    subgraph EVAL["📊 Evaluation & Infra"]
+    subgraph EVAL["📊 Evaluation"]
         direction LR
         LBR["LBR Metric<br>(Exploitability)"]
         CKPT["Checkpointing<br>Periodic+SIGUSR1"]
