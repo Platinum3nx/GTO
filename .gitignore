@@ -10,11 +10,9 @@ __pycache__/
 # Virtual environments and local Python installs
 .venv/
 venv/
-env/
-ENV/
+/env/
+/ENV/
 .python-version
-!src/gto/env/
-!src/gto/env/**
 
 # Tooling caches
 .pytest_cache/
