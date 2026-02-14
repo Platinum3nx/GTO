@@ -16,6 +16,7 @@ Flop and post-flop HUNL subgame solver scaffold using Deep CFR.
 - Replay: 1M-capacity reservoir buffers for advantage and strategy targets
 - Environment: vectorized flop-start HUNL subgame simulator API
 - Showdown: exact 7-card batched evaluator via tensorized 5-card LUT (`C(52,5)` index)
+- Evaluation: Local Best Response (LBR) callback metric (`lbr_exploitability`)
 - Precision target: bf16 on A100 (CUDA)
 
 ## Install

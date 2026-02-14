@@ -1,7 +1,7 @@
 import torch
 from torch.nn import functional as F
 
-from gto.eval import TensorLUTShowdownEvaluator
+from gto.eval.lut_evaluator import TensorLUTShowdownEvaluator
 from gto.constants import (
     ActionBucket,
     HISTORY_ACTIONS,
@@ -312,6 +312,41 @@ class VectorHUNLEnv:
     def _opponent_stack(self) -> torch.Tensor:
         batch = torch.arange(self.batch_size, device=self.device)
         return self.stacks[batch, 1 - self.current_player]
+
+    def export_game(self, index: int) -> dict[str, torch.Tensor]:
+        if not (0 <= index < self.batch_size):
+            raise IndexError(f"index out of range: {index}")
+        return {
+            "initial_stack": self.initial_stack[index].clone(),
+            "stacks": self.stacks[index].clone(),
+            "pot": self.pot[index].clone(),
+            "to_call": self.to_call[index].clone(),
+            "street": self.street[index].clone(),
+            "current_player": self.current_player[index].clone(),
+            "checks_in_round": self.checks_in_round[index].clone(),
+            "done": self.done[index].clone(),
+            "terminal_utility": self.terminal_utility[index].clone(),
+            "history": self.history[index].clone(),
+            "hole_cards": self.hole_cards[index].clone(),
+            "board_cards": self.board_cards[index].clone(),
+        }
+
+    def import_game(self, game_state: dict[str, torch.Tensor]) -> None:
+        if self.batch_size != 1:
+            raise RuntimeError("import_game currently supports only batch_size=1 environments")
+
+        self.initial_stack[0] = game_state["initial_stack"].to(self.device, dtype=self.dtype)
+        self.stacks[0] = game_state["stacks"].to(self.device, dtype=self.dtype)
+        self.pot[0] = game_state["pot"].to(self.device, dtype=self.dtype)
+        self.to_call[0] = game_state["to_call"].to(self.device, dtype=self.dtype)
+        self.street[0] = game_state["street"].to(self.device, dtype=torch.long)
+        self.current_player[0] = game_state["current_player"].to(self.device, dtype=torch.long)
+        self.checks_in_round[0] = game_state["checks_in_round"].to(self.device, dtype=torch.long)
+        self.done[0] = game_state["done"].to(self.device, dtype=torch.bool)
+        self.terminal_utility[0] = game_state["terminal_utility"].to(self.device, dtype=self.dtype)
+        self.history[0] = game_state["history"].to(self.device, dtype=self.dtype)
+        self.hole_cards[0] = game_state["hole_cards"].to(self.device, dtype=torch.long)
+        self.board_cards[0] = game_state["board_cards"].to(self.device, dtype=torch.long)
 
 
 def _approx_hand_strength(hole_cards: torch.Tensor, board_cards: torch.Tensor) -> torch.Tensor:

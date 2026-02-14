@@ -6,6 +6,7 @@ from torch.nn import functional as F
 from gto.cfr import regret_matching_plus, sample_actions
 from gto.constants import N_ACTIONS, STATE_DIM
 from gto.env import VectorHUNLEnv
+from gto.eval.lbr import LBRConfig, LocalBestResponseEvaluator
 from gto.models import AdvantageNetwork, PolicyNetwork, masked_kl_policy_loss
 from gto.replay import ReservoirBuffer
 
@@ -28,6 +29,10 @@ class DeepCFRConfig:
     small_blind: float = 0.5
     big_blind: float = 1.0
     exact_showdown: bool = True
+    lbr_enabled: bool = True
+    lbr_eval_every_iters: int = 5
+    lbr_eval_games: int = 128
+    lbr_rollouts_per_action: int = 2
 
 
 class DeepCFRTrainer:
@@ -72,6 +77,23 @@ class DeepCFRTrainer:
         )
 
         self.scaler = torch.cuda.amp.GradScaler(enabled=(cfg.precision == "fp16" and self.device.type == "cuda"))
+        self.lbr_evaluator = (
+            LocalBestResponseEvaluator(
+                LBRConfig(
+                    eval_games=cfg.lbr_eval_games,
+                    max_steps_per_hand=cfg.max_steps_per_trajectory,
+                    rollouts_per_action=cfg.lbr_rollouts_per_action,
+                ),
+                device=self.device,
+                stack_bb=cfg.stack_bb,
+                small_blind=cfg.small_blind,
+                big_blind=cfg.big_blind,
+                exact_showdown=cfg.exact_showdown,
+                showdown_evaluator=self.env.showdown_evaluator,
+            )
+            if cfg.lbr_enabled
+            else None
+        )
 
     def train(self) -> list[dict[str, float]]:
         history: list[dict[str, float]] = []
@@ -85,6 +107,8 @@ class DeepCFRTrainer:
                     step_metrics = self.train_step()
                     for k, v in step_metrics.items():
                         metrics[k] = metrics.get(k, 0.0) + v / self.cfg.updates_per_cycle
+            if self.cfg.lbr_enabled and self.cfg.lbr_eval_every_iters > 0 and it % self.cfg.lbr_eval_every_iters == 0:
+                metrics.update(self.estimate_lbr())
 
             history.append(metrics)
 
@@ -204,6 +228,11 @@ class DeepCFRTrainer:
             "adv_loss": float(adv_loss.detach().cpu()),
             "policy_loss": float(policy_loss.detach().cpu()),
         }
+
+    def estimate_lbr(self) -> dict[str, float]:
+        if self.lbr_evaluator is None:
+            return {}
+        return self.lbr_evaluator.estimate(self.policy_net)
 
     def _backward_and_step(self, loss: torch.Tensor, opt: torch.optim.Optimizer) -> None:
         if self.scaler.is_enabled():

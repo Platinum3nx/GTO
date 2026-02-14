@@ -12,6 +12,7 @@ def test_trainer_collects_outcome_sampling_targets() -> None:
         device="cpu",
         precision="fp32",
         exact_showdown=False,
+        lbr_enabled=False,
     )
     trainer = DeepCFRTrainer(cfg)
 
