@@ -51,7 +51,7 @@ python -m gto.train.trainer \
   --batch_size 4096 \
   --parallel_games 1024 \
   --trajectories_per_iter 1024 \
-  --iterations 200 \
+  --iterations 4000 \
   --checkpoint_dir checkpoints \
   --precision bf16 \
   --device cuda
