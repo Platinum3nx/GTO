@@ -1,3 +1,4 @@
+import argparse
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import os
@@ -10,6 +11,7 @@ import torch
 from torch.nn import functional as F
 
 from gto.cfr import regret_matching_plus, sample_actions
+from gto.cards import parse_card_sequence
 from gto.constants import N_ACTIONS, STATE_DIM
 from gto.env import VectorHUNLEnv
 from gto.eval.lbr import LBRConfig, LocalBestResponseEvaluator
@@ -48,6 +50,7 @@ class DeepCFRConfig:
     weight_decay: float = 1e-5
     device: str = "cuda"
     precision: str = "bf16"  # one of: fp32, fp16, bf16
+    subgame_board: str | None = None
     stack_bb: float = 100.0
     small_blind: float = 0.5
     big_blind: float = 1.0
@@ -73,6 +76,7 @@ class DeepCFRTrainer:
     def __init__(self, cfg: DeepCFRConfig) -> None:
         self.cfg = cfg
         self.device = self._resolve_device(cfg.device)
+        fixed_flop_cards = self._parse_subgame_board(cfg.subgame_board)
 
         self.env = VectorHUNLEnv(
             batch_size=cfg.parallel_games,
@@ -81,6 +85,7 @@ class DeepCFRTrainer:
             big_blind=cfg.big_blind,
             device=self.device,
             exact_showdown=cfg.exact_showdown,
+            fixed_flop_cards=fixed_flop_cards,
         )
 
         self.adv_net = AdvantageNetwork().to(self.device)
@@ -123,6 +128,7 @@ class DeepCFRTrainer:
                 small_blind=cfg.small_blind,
                 big_blind=cfg.big_blind,
                 exact_showdown=cfg.exact_showdown,
+                fixed_flop_cards=fixed_flop_cards,
                 showdown_evaluator=self.env.showdown_evaluator,
             )
             if cfg.lbr_enabled
@@ -409,6 +415,14 @@ class DeepCFRTrainer:
         if "lbr_p1" in metrics:
             self.writer.add_scalar("lbr/p1", metrics["lbr_p1"], iteration)
 
+    def _parse_subgame_board(self, board: str | None) -> list[int] | None:
+        if board is None:
+            return None
+        cards = parse_card_sequence(board)
+        if len(cards) != 3:
+            raise ValueError("--subgame_board must contain exactly 3 cards (flop only)")
+        return cards
+
     def _maybe_periodic_checkpoint(self) -> None:
         if self._checkpoint_interval <= 0:
             return
@@ -456,3 +470,65 @@ class DeepCFRTrainer:
         if self.cfg.precision == "fp16":
             return torch.autocast(device_type="cuda", dtype=torch.float16)
         raise ValueError(f"Unsupported precision mode: {self.cfg.precision}")
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Deep CFR trainer for HUNL flop subgames")
+    parser.add_argument("--subgame_board", type=str, default=None, help="Flop board cards, e.g. Kh8s2c")
+    parser.add_argument("--learning_rate", type=float, default=3e-4)
+    parser.add_argument("--batch_size", type=int, default=4096)
+    parser.add_argument("--iterations", type=int, default=200)
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
+    parser.add_argument("--resume_from", type=str, default=None)
+
+    parser.add_argument("--trajectories_per_iter", type=int, default=1024)
+    parser.add_argument("--parallel_games", type=int, default=1024)
+    parser.add_argument("--max_steps_per_trajectory", type=int, default=16)
+    parser.add_argument("--checkpoint_every_trajectories", type=int, default=20_000)
+    parser.add_argument("--checkpoint_keep_last", type=int, default=5)
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--precision", type=str, default="bf16", choices=("fp32", "fp16", "bf16"))
+    parser.add_argument("--run_dir_root", type=str, default="runs")
+    parser.add_argument("--disable_logging", action="store_true")
+    parser.add_argument("--disable_lbr", action="store_true")
+    parser.add_argument("--disable_sigusr1_handler", action="store_true")
+    return parser
+
+
+def config_from_args(args: argparse.Namespace) -> DeepCFRConfig:
+    return DeepCFRConfig(
+        iterations=args.iterations,
+        trajectories_per_iter=args.trajectories_per_iter,
+        parallel_games=args.parallel_games,
+        max_steps_per_trajectory=args.max_steps_per_trajectory,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        device=args.device,
+        precision=args.precision,
+        subgame_board=args.subgame_board,
+        checkpoint_dir=args.checkpoint_dir,
+        checkpoint_every_trajectories=args.checkpoint_every_trajectories,
+        checkpoint_keep_last=args.checkpoint_keep_last,
+        resume_from=args.resume_from,
+        handle_sigusr1=not args.disable_sigusr1_handler,
+        logging_enabled=not args.disable_logging,
+        run_dir_root=args.run_dir_root,
+        lbr_enabled=not args.disable_lbr,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    cfg = config_from_args(args)
+
+    trainer = DeepCFRTrainer(cfg)
+    try:
+        trainer.train()
+    finally:
+        trainer.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

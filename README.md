@@ -32,6 +32,19 @@ pip install -e .[dev]
 pytest
 ```
 
+## CLI
+Run training with configurable cluster-friendly arguments:
+
+```bash
+python -m gto.train.trainer \
+  --subgame_board Kh8s2c \
+  --learning_rate 3e-4 \
+  --batch_size 4096 \
+  --iterations 200 \
+  --checkpoint_dir checkpoints \
+  --resume_from checkpoints/latest.pt
+```
+
 ## Notes
 - This repository currently provides a training scaffold and interfaces.
 - LUT build can take time on first initialization, then reuses cached tensors per process/device.

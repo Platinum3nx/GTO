@@ -33,6 +33,7 @@ class LocalBestResponseEvaluator:
         small_blind: float,
         big_blind: float,
         exact_showdown: bool,
+        fixed_flop_cards: list[int] | None = None,
         showdown_evaluator=None,
     ) -> None:
         self.cfg = cfg
@@ -45,6 +46,7 @@ class LocalBestResponseEvaluator:
             big_blind=big_blind,
             device=self.device,
             exact_showdown=exact_showdown,
+            fixed_flop_cards=fixed_flop_cards,
             showdown_evaluator=showdown_evaluator,
         )
         self.probe_env = VectorHUNLEnv(
@@ -54,6 +56,7 @@ class LocalBestResponseEvaluator:
             big_blind=big_blind,
             device=self.device,
             exact_showdown=exact_showdown,
+            fixed_flop_cards=fixed_flop_cards,
             showdown_evaluator=showdown_evaluator,
         )
 

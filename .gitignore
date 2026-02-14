@@ -13,6 +13,8 @@ venv/
 env/
 ENV/
 .python-version
+!src/gto/env/
+!src/gto/env/**
 
 # Tooling caches
 .pytest_cache/

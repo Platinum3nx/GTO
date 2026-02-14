@@ -33,6 +33,7 @@ class VectorHUNLEnv:
         device: torch.device | str = "cpu",
         exact_showdown: bool = True,
         showdown_evaluator: TensorLUTShowdownEvaluator | None = None,
+        fixed_flop_cards: list[int] | None = None,
     ) -> None:
         self.batch_size = batch_size
         self.stack_bb = float(stack_bb)
@@ -42,6 +43,14 @@ class VectorHUNLEnv:
         self.dtype = dtype
         self.device = torch.device(device)
         self.exact_showdown = exact_showdown
+        self.fixed_flop_cards = fixed_flop_cards[:] if fixed_flop_cards is not None else None
+        if self.fixed_flop_cards is not None:
+            if len(self.fixed_flop_cards) != 3:
+                raise ValueError("fixed_flop_cards must contain exactly 3 card indices")
+            if len(set(self.fixed_flop_cards)) != 3:
+                raise ValueError("fixed_flop_cards must be unique")
+            if min(self.fixed_flop_cards) < 0 or max(self.fixed_flop_cards) >= NUM_CARDS:
+                raise ValueError("fixed_flop_cards indices out of range")
         self.showdown_evaluator = (
             showdown_evaluator
             if showdown_evaluator is not None
@@ -72,9 +81,22 @@ class VectorHUNLEnv:
         return self.get_state_tensor()
 
     def _deal_cards(self) -> None:
-        perm = torch.rand((self.batch_size, NUM_CARDS), device=self.device).argsort(dim=1)
-        self.hole_cards = torch.stack((perm[:, 0:2], perm[:, 2:4]), dim=1)
-        self.board_cards = perm[:, 4:9]
+        if self.fixed_flop_cards is None:
+            perm = torch.rand((self.batch_size, NUM_CARDS), device=self.device).argsort(dim=1)
+            self.hole_cards = torch.stack((perm[:, 0:2], perm[:, 2:4]), dim=1)
+            self.board_cards = perm[:, 4:9]
+            return
+
+        flop = torch.tensor(self.fixed_flop_cards, dtype=torch.long, device=self.device)
+        remaining = [c for c in range(NUM_CARDS) if c not in self.fixed_flop_cards]
+        rem_deck = torch.tensor(remaining, dtype=torch.long, device=self.device)
+        perm_idx = torch.rand((self.batch_size, rem_deck.shape[0]), device=self.device).argsort(dim=1)
+        draws = rem_deck[perm_idx]
+
+        self.hole_cards = torch.stack((draws[:, 0:2], draws[:, 2:4]), dim=1)
+        turn_river = draws[:, 4:6]
+        flop_batch = flop.unsqueeze(0).expand(self.batch_size, 3)
+        self.board_cards = torch.cat((flop_batch, turn_river), dim=1)
 
     def legal_action_mask(self) -> torch.Tensor:
         b = self.batch_size

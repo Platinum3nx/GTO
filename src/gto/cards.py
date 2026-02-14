@@ -24,6 +24,24 @@ def index_to_card(index: int) -> str:
     return f"{RANKS[index // 4]}{SUITS[index % 4]}"
 
 
+def parse_card_sequence(cards: str) -> list[int]:
+    """
+    Parse a compact or spaced card sequence into card indices.
+
+    Examples:
+    - "Kh8s2c" -> [idx(Kh), idx(8s), idx(2c)]
+    - "Kh 8s 2c" -> [idx(Kh), idx(8s), idx(2c)]
+    """
+    compact = cards.replace(" ", "").replace(",", "")
+    if len(compact) == 0 or len(compact) % 2 != 0:
+        raise ValueError(f"Invalid card sequence: {cards}")
+
+    out = [card_to_index(compact[i : i + 2]) for i in range(0, len(compact), 2)]
+    if len(out) != len(set(out)):
+        raise ValueError(f"Duplicate cards in sequence: {cards}")
+    return out
+
+
 def indices_to_mask(
     cards: Iterable[int],
     *,
