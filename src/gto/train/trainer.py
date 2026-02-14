@@ -1,4 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import signal
+import threading
+from pathlib import Path
+from typing import Callable
 
 import torch
 from torch.nn import functional as F
@@ -9,6 +13,7 @@ from gto.env import VectorHUNLEnv
 from gto.eval.lbr import LBRConfig, LocalBestResponseEvaluator
 from gto.models import AdvantageNetwork, PolicyNetwork, masked_kl_policy_loss
 from gto.replay import ReservoirBuffer
+from gto.train.checkpointing import CheckpointManager
 
 
 @dataclass(slots=True)
@@ -29,6 +34,13 @@ class DeepCFRConfig:
     small_blind: float = 0.5
     big_blind: float = 1.0
     exact_showdown: bool = True
+
+    checkpoint_dir: str = "checkpoints"
+    checkpoint_every_trajectories: int = 20_000
+    checkpoint_keep_last: int = 5
+    resume_from: str | None = None
+    handle_sigusr1: bool = True
+
     lbr_enabled: bool = True
     lbr_eval_every_iters: int = 5
     lbr_eval_games: int = 128
@@ -95,11 +107,32 @@ class DeepCFRTrainer:
             else None
         )
 
+        self.checkpoint_manager = CheckpointManager(
+            cfg.checkpoint_dir,
+            keep_last=cfg.checkpoint_keep_last,
+        )
+
+        self.current_iteration = 0
+        self.total_trajectories = 0
+        self._last_checkpoint_path: Path | None = None
+        self._preemption_requested = False
+        self._sigusr1_prev_handler: Callable | int | None = None
+
+        interval = int(cfg.checkpoint_every_trajectories)
+        self._checkpoint_interval = interval if interval > 0 else 0
+        self._next_checkpoint_trajectory = self._checkpoint_interval if self._checkpoint_interval > 0 else 0
+
+        self._register_sigusr1_handler()
+
+        if cfg.resume_from:
+            self.load_checkpoint(cfg.resume_from)
+
     def train(self) -> list[dict[str, float]]:
         history: list[dict[str, float]] = []
 
-        for it in range(1, self.cfg.iterations + 1):
-            self.collect_trajectories(self.cfg.trajectories_per_iter)
+        for it in range(self.current_iteration + 1, self.cfg.iterations + 1):
+            self.current_iteration = it
+            interrupted = self.collect_trajectories(self.cfg.trajectories_per_iter)
 
             metrics = {"iter": float(it)}
             if it % self.cfg.update_every_iter == 0:
@@ -112,14 +145,26 @@ class DeepCFRTrainer:
 
             history.append(metrics)
 
+            if interrupted:
+                self.save_checkpoint(reason="sigusr1_preempt")
+                break
+
         return history
 
-    def collect_trajectories(self, n_trajectories: int) -> None:
+    def collect_trajectories(self, n_trajectories: int) -> bool:
         remaining = n_trajectories
         while remaining > 0:
+            if self._preemption_requested:
+                return True
+
             batch = min(self.cfg.parallel_games, remaining)
             self._collect_episode_batch(batch)
             remaining -= batch
+            self.total_trajectories += batch
+
+            self._maybe_periodic_checkpoint()
+
+        return self._preemption_requested
 
     def _collect_episode_batch(self, batch_size: int) -> None:
         self.env.reset(batch_size=batch_size)
@@ -233,6 +278,96 @@ class DeepCFRTrainer:
         if self.lbr_evaluator is None:
             return {}
         return self.lbr_evaluator.estimate(self.policy_net)
+
+    def save_checkpoint(self, *, reason: str = "manual") -> Path:
+        payload = {
+            "schema_version": 1,
+            "iteration": self.current_iteration,
+            "total_trajectories": self.total_trajectories,
+            "config": asdict(self.cfg),
+            "adv_model": self.adv_net.state_dict(),
+            "policy_model": self.policy_net.state_dict(),
+            "adv_optimizer": self.adv_opt.state_dict(),
+            "policy_optimizer": self.policy_opt.state_dict(),
+            "grad_scaler": self.scaler.state_dict() if self.scaler.is_enabled() else None,
+            "adv_buffer": self.adv_buffer.state_dict(),
+            "strategy_buffer": self.strategy_buffer.state_dict(),
+            "rng": {
+                "torch": torch.get_rng_state(),
+                "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            },
+        }
+
+        path = self.checkpoint_manager.save(
+            payload,
+            iteration=self.current_iteration,
+            trajectories=self.total_trajectories,
+            reason=reason,
+        )
+        self._last_checkpoint_path = path
+        return path
+
+    def load_checkpoint(self, path: str | Path) -> None:
+        checkpoint = self.checkpoint_manager.load(path)
+
+        self.adv_net.load_state_dict(checkpoint["adv_model"])
+        self.policy_net.load_state_dict(checkpoint["policy_model"])
+        self.adv_opt.load_state_dict(checkpoint["adv_optimizer"])
+        self.policy_opt.load_state_dict(checkpoint["policy_optimizer"])
+
+        scaler_state = checkpoint.get("grad_scaler")
+        if scaler_state is not None and self.scaler.is_enabled():
+            self.scaler.load_state_dict(scaler_state)
+
+        self.adv_buffer.load_state_dict(checkpoint["adv_buffer"])
+        self.strategy_buffer.load_state_dict(checkpoint["strategy_buffer"])
+
+        self.current_iteration = int(checkpoint.get("iteration", 0))
+        self.total_trajectories = int(checkpoint.get("total_trajectories", 0))
+
+        if self._checkpoint_interval > 0:
+            next_mul = (self.total_trajectories // self._checkpoint_interval) + 1
+            self._next_checkpoint_trajectory = next_mul * self._checkpoint_interval
+
+        rng_state = checkpoint.get("rng", {})
+        torch_state = rng_state.get("torch") if isinstance(rng_state, dict) else None
+        cuda_state = rng_state.get("cuda") if isinstance(rng_state, dict) else None
+        if torch_state is not None:
+            torch.set_rng_state(torch_state)
+        if cuda_state is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(cuda_state)
+
+        self._last_checkpoint_path = Path(path)
+
+    def close(self) -> None:
+        if self._sigusr1_prev_handler is not None:
+            signal.signal(signal.SIGUSR1, self._sigusr1_prev_handler)
+            self._sigusr1_prev_handler = None
+
+    def _maybe_periodic_checkpoint(self) -> None:
+        if self._checkpoint_interval <= 0:
+            return
+        if self.total_trajectories < self._next_checkpoint_trajectory:
+            return
+
+        while self.total_trajectories >= self._next_checkpoint_trajectory:
+            self.save_checkpoint(reason="periodic")
+            self._next_checkpoint_trajectory += self._checkpoint_interval
+
+    def _register_sigusr1_handler(self) -> None:
+        if not self.cfg.handle_sigusr1:
+            return
+        if threading.current_thread() is not threading.main_thread():
+            return
+        if not hasattr(signal, "SIGUSR1"):
+            return
+
+        self._sigusr1_prev_handler = signal.getsignal(signal.SIGUSR1)
+        signal.signal(signal.SIGUSR1, self._handle_sigusr1)
+
+    def _handle_sigusr1(self, signum: int, frame) -> None:  # noqa: ANN001
+        _ = signum, frame
+        self._preemption_requested = True
 
     def _backward_and_step(self, loss: torch.Tensor, opt: torch.optim.Optimizer) -> None:
         if self.scaler.is_enabled():

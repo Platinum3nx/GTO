@@ -94,3 +94,39 @@ class ReservoirBuffer:
         if candidate < self.capacity:
             return candidate
         return None
+
+    def state_dict(self) -> dict[str, object]:
+        return {
+            "capacity": self.capacity,
+            "state_dim": self.state_dim,
+            "target_dim": self.target_dim,
+            "dtype": str(self.dtype),
+            "device": str(self.device),
+            "states": self.states.clone(),
+            "targets": self.targets.clone(),
+            "size": self._size,
+            "seen": self._seen,
+        }
+
+    def load_state_dict(self, state: dict[str, object]) -> None:
+        required = {"capacity", "state_dim", "target_dim", "states", "targets", "size", "seen"}
+        missing = required.difference(state.keys())
+        if missing:
+            raise ValueError(f"Missing keys in reservoir state_dict: {sorted(missing)}")
+
+        if int(state["capacity"]) != self.capacity:
+            raise ValueError("Buffer capacity mismatch while loading checkpoint")
+        if int(state["state_dim"]) != self.state_dim:
+            raise ValueError("Buffer state_dim mismatch while loading checkpoint")
+        if int(state["target_dim"]) != self.target_dim:
+            raise ValueError("Buffer target_dim mismatch while loading checkpoint")
+
+        states = torch.as_tensor(state["states"], dtype=self.dtype, device=self.device)
+        targets = torch.as_tensor(state["targets"], dtype=self.dtype, device=self.device)
+        if states.shape != self.states.shape or targets.shape != self.targets.shape:
+            raise ValueError("Buffer tensor shape mismatch while loading checkpoint")
+
+        self.states.copy_(states)
+        self.targets.copy_(targets)
+        self._size = int(state["size"])
+        self._seen = int(state["seen"])

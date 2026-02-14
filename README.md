@@ -18,6 +18,7 @@ Flop and post-flop HUNL subgame solver scaffold using Deep CFR.
 - Showdown: exact 7-card batched evaluator via tensorized 5-card LUT (`C(52,5)` index)
 - Evaluation: Local Best Response (LBR) callback metric (`lbr_exploitability`)
 - Precision target: bf16 on A100 (CUDA)
+- Checkpointing: periodic trajectory-based saves + SIGUSR1 preemption-triggered final save
 
 ## Install
 ```bash
@@ -33,4 +34,4 @@ pytest
 ## Notes
 - This repository currently provides a training scaffold and interfaces.
 - LUT build can take time on first initialization, then reuses cached tensors per process/device.
-- For evaluation quality, add Local Best Response (LBR) tooling around trained policies.
+- Checkpoints include model weights, optimizer states, and both reservoir buffers.
