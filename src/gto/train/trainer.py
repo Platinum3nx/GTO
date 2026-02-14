@@ -477,7 +477,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--subgame_board", type=str, default=None, help="Flop board cards, e.g. Kh8s2c")
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--batch_size", type=int, default=4096)
-    parser.add_argument("--iterations", type=int, default=200)
+    parser.add_argument("--iterations", type=int, default=4000)
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
     parser.add_argument("--resume_from", type=str, default=None)
 
