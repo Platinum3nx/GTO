@@ -29,7 +29,25 @@ class TensorLUTShowdownEvaluator:
             TensorLUTShowdownEvaluator._cpu_lut5 = _build_lut5_cpu()
 
         if key not in TensorLUTShowdownEvaluator._device_cache:
-            lut5 = TensorLUTShowdownEvaluator._cpu_lut5.to(self.device, non_blocking=True)
+            lut5 = None
+            # Retry loop for GPU initialization to handle "device busy" or transient errors
+            for attempt in range(5):
+                try:
+                    if self.device.type == "cuda":
+                        torch.cuda.synchronize(self.device)
+                    
+                    # Force synchronous transfer to avoid race conditions on shared clusters
+                    lut5 = TensorLUTShowdownEvaluator._cpu_lut5.to(self.device)
+                    
+                    if self.device.type == "cuda":
+                        torch.cuda.synchronize(self.device)
+                    break
+                except (RuntimeError, torch.AcceleratorError) as e:
+                    if attempt == 4:
+                        raise e
+                    import time
+                    time.sleep(1.0)
+
             choose5 = torch.combinations(torch.arange(7, dtype=torch.long), r=5).to(self.device)
             binom = _build_binom_table(device=self.device)
             TensorLUTShowdownEvaluator._device_cache[key] = (lut5, choose5, binom)

@@ -38,7 +38,7 @@ class _NullSummaryWriter:
 
 @dataclass(slots=True)
 class DeepCFRConfig:
-    iterations: int = 200
+    iterations: int = 4000
     trajectories_per_iter: int = 1024
     parallel_games: int = 1024
     max_steps_per_trajectory: int = 16
