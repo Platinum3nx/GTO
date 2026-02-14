@@ -8,56 +8,56 @@
 flowchart TB
     subgraph ENV["🃏 Vectorized HUNL Environment"]
         direction LR
-        DEAL["Deal Flop\n+ Hole Cards"]
-        SIM["1024 Parallel\nGames (CUDA)"]
-        SD["7-Card Showdown\nLUT Evaluator"]
+        DEAL["Deal Flop +<br>Hole Cards"]
+        SIM["1024 Parallel<br>Games (CUDA)"]
+        SD["7-Card Showdown<br>LUT Evaluator"]
         DEAL --> SIM --> SD
     end
 
-    subgraph ENCODE["📐 State Encoder — 199 Features"]
+    subgraph ENCODE["📐 State Encoder (199 Features)"]
         direction LR
-        CARDS["Card Encoding\n52 hole + 52 board\n+ 52 opp range\n= 156 features"]
-        BET["Betting State\npot · stacks · call\n+ street one-hot\n= 8 features"]
-        HIST["Action History\nlast 5 actions × 7\n= 35 features"]
+        CARDS["Card Encoding<br>156 features"]
+        BET["Betting State<br>8 features"]
+        HIST["Action History<br>35 features"]
     end
 
     subgraph NETS["🧠 Neural Networks (PyTorch)"]
         direction LR
-        ADV["Advantage Net\n199→512→512→512→512→5\nLeakyReLU · MSE Loss"]
-        POL["Policy Net\n199→512→512→512→512→5\nLeakyReLU · KL Loss"]
+        ADV["Advantage Net<br>199→512x4→5<br>MSE Loss"]
+        POL["Policy Net<br>199→512x4→5<br>KL Loss"]
     end
 
     subgraph CFR["♻️ MCCFR Training Loop"]
         direction TB
-        RM["Regret Matching+\nCompute Action Policy"]
-        SAMPLE["Outcome Sampling\nTraverse Game Tree"]
-        REGRET["Counterfactual\nRegret Backup"]
+        RM["Regret Matching+<br>Policy"]
+        SAMPLE["Outcome Sampling<br>Tree Traversal"]
+        REGRET["Counterfactual<br>Regret Backup"]
         RM --> SAMPLE --> REGRET
     end
 
-    subgraph BUFFERS["💾 Reservoir Buffers (1M each)"]
+    subgraph BUFFERS["💾 Reservoir Buffers (1M)"]
         direction LR
-        ABUF["Advantage Buffer\n(state, regrets)"]
-        SBUF["Strategy Buffer\n(state, policy)"]
+        ABUF["Advantage Buffer<br>(state, regrets)"]
+        SBUF["Strategy Buffer<br>(state, policy)"]
     end
 
     subgraph EVAL["📊 Evaluation & Infra"]
         direction LR
-        LBR["LBR Exploitability\nBest-Response Metric"]
-        CKPT["Checkpointing\nPeriodic + SIGUSR1"]
-        TB["TensorBoard\nLoss · LBR Curves"]
+        LBR["LBR Metric<br>(Exploitability)"]
+        CKPT["Checkpointing<br>Periodic+SIGUSR1"]
+        TB["TensorBoard<br>Loss+LBR"]
     end
 
-    ENV -->|"game states"| ENCODE
-    ENCODE -->|"199-d tensor"| NETS
+    ENV -->|"game state"| ENCODE
+    ENCODE -->|"tensor"| NETS
     ADV -->|"advantages"| CFR
     CFR -->|"regrets"| ABUF
-    CFR -->|"action probs"| SBUF
-    ABUF -->|"batch 4096"| ADV
-    SBUF -->|"batch 4096"| POL
+    CFR -->|"policy"| SBUF
+    ABUF -->|"batch"| ADV
+    SBUF -->|"batch"| POL
     POL -.->|"evaluate"| LBR
     NETS -.->|"weights"| CKPT
-    NETS -.->|"loss scalars"| TB
+    NETS -.->|"logs"| TB
 
     style ENV fill:#1a1a2e,stroke:#e94560,color:#eee
     style ENCODE fill:#16213e,stroke:#0f3460,color:#eee
