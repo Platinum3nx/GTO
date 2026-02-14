@@ -12,6 +12,7 @@ Flop and post-flop HUNL subgame solver scaffold using Deep CFR.
   - All-In
 - Networks: Advantage and Policy MLPs (`199 -> 512 -> ... -> 512 -> 5`)
 - Policy loss: KL divergence with soft CFR strategy targets
+- Traversal: RM+ policy generation + outcome-sampling counterfactual regret backup
 - Replay: 1M-capacity reservoir buffers for advantage and strategy targets
 - Environment: vectorized flop-start HUNL subgame simulator API
 - Showdown: exact 7-card batched evaluator via tensorized 5-card LUT (`C(52,5)` index)

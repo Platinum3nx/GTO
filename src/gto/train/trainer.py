@@ -1,10 +1,9 @@
 from dataclasses import dataclass
 
 import torch
-from torch import nn
 from torch.nn import functional as F
 
-from gto.cfr import regret_matching, sample_actions
+from gto.cfr import regret_matching_plus, sample_actions
 from gto.constants import N_ACTIONS, STATE_DIM
 from gto.env import VectorHUNLEnv
 from gto.models import AdvantageNetwork, PolicyNetwork, masked_kl_policy_loss
@@ -28,6 +27,7 @@ class DeepCFRConfig:
     stack_bb: float = 100.0
     small_blind: float = 0.5
     big_blind: float = 1.0
+    exact_showdown: bool = True
 
 
 class DeepCFRTrainer:
@@ -41,6 +41,7 @@ class DeepCFRTrainer:
             small_blind=cfg.small_blind,
             big_blind=cfg.big_blind,
             device=self.device,
+            exact_showdown=cfg.exact_showdown,
         )
 
         self.adv_net = AdvantageNetwork().to(self.device)
@@ -99,10 +100,10 @@ class DeepCFRTrainer:
     def _collect_episode_batch(self, batch_size: int) -> None:
         self.env.reset(batch_size=batch_size)
 
-        step_states: list[torch.Tensor] = []
-        step_policies: list[torch.Tensor] = []
-        step_actions: list[torch.Tensor] = []
-        step_players: list[torch.Tensor] = []
+        step_records: list[dict[str, torch.Tensor]] = []
+        p0_prefix = torch.ones((batch_size,), dtype=torch.float32, device=self.device)
+        p1_prefix = torch.ones((batch_size,), dtype=torch.float32, device=self.device)
+        q_reach = torch.ones((batch_size,), dtype=torch.float32, device=self.device)
 
         for _ in range(self.cfg.max_steps_per_trajectory):
             active = ~self.env.done
@@ -115,26 +116,69 @@ class DeepCFRTrainer:
 
             with torch.no_grad(), self._autocast_ctx():
                 advantages = self.adv_net(state)
-            policy = regret_matching(advantages, legal)
+            policy = regret_matching_plus(advantages, legal)
+            if (~active).any():
+                policy[~active] = 0.0
+                policy[~active, 1] = 1.0
             action = sample_actions(policy)
 
-            step_states.append(state.detach().cpu())
-            step_policies.append(policy.detach().cpu())
-            step_actions.append(action.detach().cpu())
-            step_players.append(players.detach().cpu())
+            chosen_prob = policy.gather(1, action.unsqueeze(1)).squeeze(1).clamp_min(1e-8)
+
+            step_records.append(
+                {
+                    "state": state.detach().cpu(),
+                    "legal": legal.detach().cpu(),
+                    "policy": policy.detach().cpu(),
+                    "action": action.detach().cpu(),
+                    "player": players.detach().cpu(),
+                    "active": active.detach().cpu(),
+                    "p0_prefix": p0_prefix.detach().cpu(),
+                    "p1_prefix": p1_prefix.detach().cpu(),
+                    "chosen_prob": chosen_prob.detach().cpu(),
+                }
+            )
+
+            q_reach = q_reach * torch.where(active, chosen_prob, torch.ones_like(chosen_prob))
+            p0_prefix = p0_prefix * torch.where(active & (players == 0), chosen_prob, torch.ones_like(chosen_prob))
+            p1_prefix = p1_prefix * torch.where(active & (players == 1), chosen_prob, torch.ones_like(chosen_prob))
 
             self.env.step(action)
 
-        terminal_u0 = self.env.terminal_utility.detach().cpu()
+        terminal_u0 = self.env.terminal_utility.detach().cpu().to(torch.float32)
+        q_total = q_reach.detach().cpu().clamp_min(1e-8)
 
-        for state, policy, action, player in zip(step_states, step_policies, step_actions, step_players):
-            actor_utility = torch.where(player == 0, terminal_u0, -terminal_u0).unsqueeze(1)
-            one_hot_action = F.one_hot(action, num_classes=N_ACTIONS).to(torch.float32)
+        for rec in reversed(step_records):
+            active = rec["active"]
+            if not active.any():
+                continue
 
-            # Placeholder regret target for scaffold wiring.
-            regret_target = actor_utility * (one_hot_action - policy)
+            state = rec["state"][active]
+            legal = rec["legal"][active]
+            policy = rec["policy"][active]
+            action = rec["action"][active]
+            player = rec["player"][active]
+            p0_pre = rec["p0_prefix"][active]
+            p1_pre = rec["p1_prefix"][active]
+            chosen_prob = rec["chosen_prob"][active].clamp_min(1e-8)
 
-            self.adv_buffer.add_batch(state, regret_target)
+            u0 = terminal_u0[active]
+            q = q_total[active]
+
+            u_actor = torch.where(player == 0, u0, -u0)
+            opp_prefix = torch.where(player == 0, p1_pre, p0_pre)
+
+            # Outcome-sampling MCCFR estimator for sampled regrets at visited infosets.
+            weight = u_actor * opp_prefix / q
+
+            regrets = torch.where(
+                legal,
+                -weight.unsqueeze(1),
+                torch.zeros_like(policy),
+            )
+            idx = torch.arange(action.shape[0])
+            regrets[idx, action] = weight * (1.0 / chosen_prob - 1.0)
+
+            self.adv_buffer.add_batch(state, regrets)
             self.strategy_buffer.add_batch(state, policy)
 
     def train_step(self) -> dict[str, float]:
