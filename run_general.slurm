@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=gto_train           # Job name
+#SBATCH --job-name=gto_general         # Job name
 #SBATCH --output=runs/slurm-%j.out     # Standard output log
 #SBATCH --error=runs/slurm-%j.err      # Standard error log
 #SBATCH --partition=gpu                # Partition
@@ -7,7 +7,7 @@
 #SBATCH --constraint="a100_40gb|a100_80gb" # Request A100 (40GB or 80GB)
 #SBATCH --cpus-per-task=4              # 4 CPU cores
 #SBATCH --mem=32000                    # 32GB System RAM (in MB)
-#SBATCH --time=12:00:00                # Time limit (12 hours)
+#SBATCH --time=3-00:00:00              # Time limit (3 days)
 #SBATCH --mail-type=END,FAIL           # Mail events (NONE, BEGIN, END, FAIL, ALL)
 #SBATCH --mail-user=qat5sc@virginia.edu # User email (replace with your computing ID)
 
@@ -46,12 +46,11 @@ nvidia-smi
 # - precision: bf16 (native support on Ampere)
 
 python -m gto.train.trainer \
-  --subgame_board Kh8s2c \
   --learning_rate 3e-4 \
   --batch_size 4096 \
   --parallel_games 1024 \
   --trajectories_per_iter 1024 \
-  --iterations 4000 \
-  --checkpoint_dir checkpoints \
+  --iterations 50000 \
+  --checkpoint_dir checkpoints_general \
   --precision bf16 \
   --device cuda
