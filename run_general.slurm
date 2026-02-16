@@ -54,4 +54,5 @@ python -u -m gto.train.trainer \
   --iterations 50000 \
   --checkpoint_dir checkpoints_general \
   --precision bf16 \
-  --device cuda
+  --device cuda \
+  --resume_from checkpoints_general/deepcfr_iter003672_traj000003760128_periodic.pt
