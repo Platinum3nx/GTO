@@ -21,6 +21,7 @@ module load cuda
 # Enhance performance for PyTorch on A100
 export TORCH_CUDNN_V8_API_ENABLED=1
 export CUDA_LAUNCH_BLOCKING=0
+export PYTHONUNBUFFERED=1
 
 # Create/Activate Virtual Environment
 if [ ! -d "venv" ]; then
@@ -45,7 +46,7 @@ nvidia-smi
 # - parallel_games: 1024 (maximizes vectorized throughput)
 # - precision: bf16 (native support on Ampere)
 
-python -m gto.train.trainer \
+python -u -m gto.train.trainer \
   --learning_rate 3e-4 \
   --batch_size 4096 \
   --parallel_games 1024 \
